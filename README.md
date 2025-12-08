@@ -5,8 +5,6 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.txt)
 [![Nuke](https://img.shields.io/badge/Nuke-16.0-yellow.svg)](https://www.foundry.com/products/nuke)
 
-![Depth Anything 3 Banner](docs/banner.png)
-
 ## Description
 
 This plugin brings **Depth Anything 3** monocular depth estimation to Foundry's Nuke compositing software. It generates high-quality depth maps from single RGB images using the DA3Mono-Large model (350M parameters).
