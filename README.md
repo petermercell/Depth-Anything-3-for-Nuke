@@ -30,7 +30,7 @@ Read → Reformat → Inference → Reformat → Output
 
 - Type: **to box**
 - Width/Height: exact model resolution
-- Resize type: **fit**
+- Resize type: **distort**
 - Filter: **Cubic (Keys)**
 - ☑️ **force shape** ← critical!
 
