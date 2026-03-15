@@ -1,4 +1,4 @@
-# Depth Anything 3 for Nuke
+# Depth Anything 3 for Nuke 17.0
 
 Monocular depth estimation plugin for Foundry's Nuke using [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) Mono Large (350M parameters).
 
