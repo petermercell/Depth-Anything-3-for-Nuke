@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Depth Anything 3 Mono -> Nuke Cattery Export (v3)
+Depth Anything 3 Mono -> Nuke Cattery Export (v4)
 
 This version follows Rafael's DepthAnythingV2 pattern exactly:
 - Fixed resolution tracing
@@ -8,7 +8,7 @@ This version follows Rafael's DepthAnythingV2 pattern exactly:
 - Clean TorchScript output without debug prints
 
 Usage:
-    python nuke_da3_v3.py \
+    python nuke_da3_v4.py \
         --model-path /path/to/DA3MONO-LARGE.safetensors \
         --config-path /path/to/config.json \
         --resolution 518 \
