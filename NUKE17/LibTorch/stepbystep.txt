@@ -1,0 +1,15 @@
+# 1. trace the .pt if you haven't already (FP32 recommended)
+conda activate da3_nuke17
+python nuke_da3_v4.py \
+    --model-path /path/to/DA3MONO-LARGE/model.safetensors \
+    --config-path /path/to/DA3MONO-LARGE/config.json \
+    --width 2058 --height 1092 --no-half \
+    --output-dir ./output
+
+# 2. build the plugin
+export PATH=/usr/local/cuda-12.8/bin:$PATH
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# 3. install
+cp build/LibTorchDepthAnything3.so ~/.nuke/
