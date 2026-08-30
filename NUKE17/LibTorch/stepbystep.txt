@@ -13,3 +13,30 @@ cmake --build build
 
 # 3. install
 cp build/LibTorchDepthAnything3.so ~/.nuke/
+
+
+////
+
+
+WIN 171:
+
+set PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin;%PATH%
+
+cd C:\Users\WORKSTATION\Downloads\Depth-Anything-3-for-Nuke-main\Depth-Anything-3-for-Nuke-main\NUKE17\LibTorch
+rmdir /s /q build & mkdir build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+      -DNUKE_VERSION=17.1v1 ^
+      -DTORCH_DIR=C:/libtorch-2.7.1
+cmake --build .
+
+/////
+
+WIN 170:
+
+"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64 -vcvars_ver=14.36
+set PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9\bin;%PATH%
+cd C:\Users\WORKSTATION\Downloads\Depth-Anything-3-for-Nuke-main\Depth-Anything-3-for-Nuke-main\NUKE17\LibTorch
+rmdir /s /q build & mkdir build && cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DNUKE_VERSION=17.0v1 -DTORCH_DIR=C:/libtorch-2.7.1
+cmake --build .
+copy /y LibTorchDepthAnything3.dll "C:\Users\WORKSTATION\.nuke\CPP170\"
