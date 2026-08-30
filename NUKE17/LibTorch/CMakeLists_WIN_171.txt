@@ -1,0 +1,275 @@
+# ============================================================================
+# CMakeLists.txt  —  LibTorchDepthAnything3  (Nuke 17 / libtorch 2.7.1 / CUDA 12.x)
+#
+# LINUX (unchanged recipe):
+#   * Link Nuke's bundled .so (libtorch / libtorch_cpu / libtorch_cuda /
+#     libc10 / libc10_cuda) — guarantees ABI parity with the libtorch the
+#     plugin will load inside.
+#   * Headers from a version-matched conda env (da3_nuke17, torch 2.7.1).
+#   * -D_GLIBCXX_USE_CXX11_ABI=1.
+#   * BUILD_RPATH = Nuke root + CUDA libdir; INSTALL_RPATH = $ORIGIN + Nuke.
+#
+# WINDOWS (MSVC / Ninja):
+#   * Foundry ships torch DLLs but no import libraries, so we link a standalone
+#     libtorch 2.7.1 (cu128, Release) via -DTORCH_DIR=... At runtime the loader
+#     resolves torch.dll / c10.dll etc. by NAME and Nuke's own directory is on
+#     the search path, so the plugin binds to Nuke's already-loaded copy. That
+#     only works if TORCH_DIR is EXACTLY Nuke's version (2.7.1).
+#   * We deliberately do NOT use libtorch's TorchConfig.cmake. Its bundled
+#     Caffe2 config (a) creates torch::nvtoolsext -> CUDA::nvToolsExt, a target
+#     that no longer exists in CUDA >= 12.8 (NVTX is header-only NVTX3 now),
+#     which hard-fails the generate step, and (b) uses the legacy FindCUDA
+#     module, which happily picks a different toolkit (e.g. v13.1) from the one
+#     FindCUDAToolkit resolved. Linking the five import libs by hand avoids all
+#     of it. Set -DDA3_USE_TORCH_CONFIG=ON to go through TorchConfig anyway;
+#     a stub CUDA::nvToolsExt is provided in that case.
+#   * Output is a .dll, no RPATH, /MD runtime, NOMINMAX (DDImage + windows.h
+#     would otherwise nuke std::min/std::max).
+#
+# Typical configure lines
+#   Linux:
+#     cmake .. -DNUKE_ROOT=/opt/Nuke17.0v1
+#   Windows:
+#     cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release ^
+#           -DNUKE_VERSION=17.1v1 -DTORCH_DIR=C:/libtorch-2.7.1
+#     cmake --build .
+#
+# No OpenCV: Nuke hands us pixels directly.
+# ============================================================================
+cmake_minimum_required(VERSION 3.18)
+project(LibTorchDepthAnything3 VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# DDImage and libtorch are both /MD — anything else gives duplicate CRT heaps.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+endif()
+
+# ---- sources (accept src/ layout or flat layout) ----
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/LibTorchDepthAnything3.cpp")
+    set(SRC "${CMAKE_SOURCE_DIR}/src")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/LibTorchDepthAnything3.cpp")
+    set(SRC "${CMAKE_SOURCE_DIR}")
+else()
+    message(FATAL_ERROR "LibTorchDepthAnything3.cpp not found in ${CMAKE_SOURCE_DIR} or ${CMAKE_SOURCE_DIR}/src")
+endif()
+
+# ============================================================================
+# Nuke
+# ============================================================================
+set(NUKE_VERSION "17.0v1" CACHE STRING "Nuke version, e.g. 17.0v1 / 17.1v1")
+
+if(WIN32)
+    set(NUKE_ROOT "C:/Program Files/Nuke${NUKE_VERSION}" CACHE PATH "Nuke install")
+else()
+    set(NUKE_ROOT "/opt/Nuke${NUKE_VERSION}" CACHE PATH "Nuke install")
+endif()
+
+if(NOT EXISTS "${NUKE_ROOT}/include/DDImage/Iop.h")
+    message(FATAL_ERROR "Nuke NDK headers not found in ${NUKE_ROOT}/include\n"
+        "Pass -DNUKE_ROOT=... (or -DNUKE_VERSION=...).")
+endif()
+set(NUKE_INCLUDE "${NUKE_ROOT}/include")
+
+# DDImage.lib on Windows, libDDImage.so on Linux — same find_library call.
+find_library(DDIMAGE_LIBRARY NAMES DDImage
+    PATHS "${NUKE_ROOT}" NO_DEFAULT_PATH REQUIRED)
+
+# ============================================================================
+# CUDA  (resolved BEFORE torch, so nothing else can pick a different toolkit)
+# ============================================================================
+if(NOT DEFINED CUDAToolkit_ROOT)
+    if(WIN32)
+        foreach(_v 12.8 12.9 12.6 12.4)
+            if(EXISTS "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${_v}")
+                set(CUDAToolkit_ROOT "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${_v}")
+                break()
+            endif()
+        endforeach()
+    else()
+        foreach(_v 12.8 12.9 12.6 12.4)
+            if(EXISTS "/usr/local/cuda-${_v}")
+                set(CUDAToolkit_ROOT "/usr/local/cuda-${_v}")
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+find_package(CUDAToolkit REQUIRED)
+
+# Keep the legacy FindCUDA module (used by Caffe2Config) on the same toolkit.
+set(CUDA_TOOLKIT_ROOT_DIR "${CUDAToolkit_TARGET_DIR}" CACHE PATH "" FORCE)
+
+# ============================================================================
+# libtorch
+# ============================================================================
+if(WIN32)
+    set(TORCH_DIR "C:/libtorch-2.7.1" CACHE PATH "standalone libtorch 2.7.1 (Release, cu128)")
+    if(NOT EXISTS "${TORCH_DIR}/include/torch/script.h")
+        message(FATAL_ERROR "torch/script.h not found in ${TORCH_DIR}/include\n"
+            "Set -DTORCH_DIR=C:/libtorch-2.7.1 (unzipped libtorch, Release + CUDA 12.8).")
+    endif()
+
+    option(DA3_USE_TORCH_CONFIG "Windows: configure through libtorch's TorchConfig.cmake" OFF)
+
+    if(DA3_USE_TORCH_CONFIG)
+        # Caffe2's cuda.cmake still expects CUDA::nvToolsExt, removed in CUDA 12.8+.
+        if(NOT TARGET CUDA::nvToolsExt)
+            add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+            message(STATUS "libtorch: added stub CUDA::nvToolsExt (removed in CUDA >= 12.8)")
+        endif()
+        find_package(Torch REQUIRED PATHS "${TORCH_DIR}" NO_DEFAULT_PATH)
+        set(TORCH_INCLUDE_DIRS_RESOLVED ${TORCH_INCLUDE_DIRS})
+        set(TORCH_LIBS ${TORCH_LIBRARIES})
+        message(STATUS "libtorch: TorchConfig.cmake from ${TORCH_DIR}")
+    else()
+        set(TORCH_INCLUDE_DIRS_RESOLVED
+            "${TORCH_DIR}/include"
+            "${TORCH_DIR}/include/torch/csrc/api/include")
+        set(TORCH_LIBS "")
+        foreach(_l torch torch_cpu torch_cuda c10 c10_cuda)
+            find_library(TORCH_LIB_${_l} NAMES ${_l}
+                PATHS "${TORCH_DIR}/lib" NO_DEFAULT_PATH REQUIRED)
+            list(APPEND TORCH_LIBS "${TORCH_LIB_${_l}}")
+        endforeach()
+        message(STATUS "libtorch: import libs linked directly from ${TORCH_DIR}/lib")
+    endif()
+
+    # Sanity note: Nuke ships its own torch DLLs and they win at load time.
+    file(GLOB _nuke_torch_dlls "${NUKE_ROOT}/torch*.dll" "${NUKE_ROOT}/c10*.dll")
+    if(_nuke_torch_dlls)
+        message(STATUS "Nuke ships torch DLLs — the plugin will bind to THOSE at "
+                       "runtime. ${TORCH_DIR} must be exactly the same version (2.7.1).")
+    endif()
+else()
+    # ---- Linux: link Nuke's own .so, headers from a version-matched conda env ----
+    if(NOT EXISTS "${NUKE_ROOT}/libtorch.so")
+        message(FATAL_ERROR "Nuke libtorch not found in ${NUKE_ROOT}")
+    endif()
+
+    set(TORCH_INCLUDE_ROOT
+        "$ENV{HOME}/miniconda3/envs/da3_nuke17/lib/python3.11/site-packages/torch/include"
+        CACHE PATH "libtorch headers (conda)")
+    if(NOT EXISTS "${TORCH_INCLUDE_ROOT}/torch/script.h")
+        message(FATAL_ERROR "torch/script.h not found in ${TORCH_INCLUDE_ROOT}\n"
+            "Set -DTORCH_INCLUDE_ROOT=... to the include dir of a torch 2.7.1 install.")
+    endif()
+    set(TORCH_INCLUDE_DIRS_RESOLVED
+        "${TORCH_INCLUDE_ROOT}"
+        "${TORCH_INCLUDE_ROOT}/torch/csrc/api/include")
+
+    set(TORCH_LIBS
+        "${NUKE_ROOT}/libtorch.so"
+        "${NUKE_ROOT}/libtorch_cpu.so"
+        "${NUKE_ROOT}/libtorch_cuda.so"
+        "${NUKE_ROOT}/libc10.so"
+        "${NUKE_ROOT}/libc10_cuda.so")
+endif()
+
+# ============================================================================
+# the plugin
+# ============================================================================
+add_library(LibTorchDepthAnything3 SHARED
+    ${SRC}/LibTorchDepthAnything3.cpp
+    ${SRC}/torch_engine.cpp)
+
+target_include_directories(LibTorchDepthAnything3 PRIVATE
+    ${SRC}
+    ${NUKE_INCLUDE}
+    ${TORCH_INCLUDE_DIRS_RESOLVED}
+    ${CUDAToolkit_INCLUDE_DIRS})
+
+if(MSVC)
+    target_compile_definitions(LibTorchDepthAnything3 PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        _USE_MATH_DEFINES
+        _CRT_SECURE_NO_WARNINGS
+        _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS)
+
+    target_compile_options(LibTorchDepthAnything3 PRIVATE
+        /W3 /MP /bigobj /EHsc /permissive- /Zc:__cplusplus
+        /wd4251 /wd4267 /wd4244 /wd4275 /wd4305 /wd4996)
+
+    if(DA3_USE_TORCH_CONFIG AND TORCH_CXX_FLAGS)
+        separate_arguments(_torch_flags NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
+        target_compile_options(LibTorchDepthAnything3 PRIVATE ${_torch_flags})
+    endif()
+else()
+    target_compile_definitions(LibTorchDepthAnything3 PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+    target_compile_options(LibTorchDepthAnything3 PRIVATE
+        -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations
+        -O3 -fvisibility=hidden)
+endif()
+
+target_link_libraries(LibTorchDepthAnything3 PRIVATE
+    ${DDIMAGE_LIBRARY}
+    ${TORCH_LIBS}
+    CUDA::cudart)
+
+if(NOT WIN32)
+    target_link_libraries(LibTorchDepthAnything3 PRIVATE dl rt pthread)
+endif()
+
+# MSVC discards object files whose symbols look unreferenced, which can strip
+# torch_cuda's static kernel registrations ("Could not run 'aten::...' with
+# arguments from the 'CUDA' backend"). Inside Nuke this is usually moot —
+# Nuke has already loaded torch_cuda.dll itself. Turn ON if you hit it.
+# Verify the symbol first:
+#   dumpbin /exports C:\libtorch-2.7.1\lib\torch_cuda.lib | findstr warp_size
+option(DA3_FORCE_TORCH_CUDA_SYMBOLS "MSVC: force-link torch_cuda registrations" OFF)
+if(MSVC AND DA3_FORCE_TORCH_CUDA_SYMBOLS)
+    target_link_options(LibTorchDepthAnything3 PRIVATE "/INCLUDE:?warp_size@cuda@at@@YAHXZ")
+endif()
+
+# ---- output naming / runtime paths ----
+set_target_properties(LibTorchDepthAnything3 PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "LibTorchDepthAnything3")
+
+if(WIN32)
+    set_target_properties(LibTorchDepthAnything3 PROPERTIES SUFFIX ".dll")
+else()
+    set_target_properties(LibTorchDepthAnything3 PROPERTIES
+        SUFFIX ".so"
+        BUILD_RPATH   "${NUKE_ROOT};${CUDAToolkit_LIBRARY_DIR}"
+        INSTALL_RPATH "$ORIGIN:${NUKE_ROOT}")
+endif()
+
+# Optional: drop libtorch's DLLs next to the plugin. NOTE the loader does NOT
+# search a DLL's own directory by default — this only helps if you also add
+# that folder to PATH. Off by default: Nuke's own torch DLLs should win.
+option(DA3_COPY_TORCH_DLLS "Windows: copy libtorch DLLs beside the built plugin" OFF)
+if(WIN32 AND DA3_COPY_TORCH_DLLS)
+    file(GLOB TORCH_RUNTIME_DLLS "${TORCH_DIR}/lib/*.dll")
+    add_custom_command(TARGET LibTorchDepthAnything3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${TORCH_RUNTIME_DLLS} $<TARGET_FILE_DIR:LibTorchDepthAnything3>
+        COMMAND_EXPAND_LISTS)
+endif()
+
+install(TARGETS LibTorchDepthAnything3
+    RUNTIME DESTINATION .
+    LIBRARY DESTINATION .)
+
+message(STATUS "")
+message(STATUS "=== LibTorchDepthAnything3 ===")
+message(STATUS "  Platform: ${CMAKE_SYSTEM_NAME}")
+message(STATUS "  Nuke:     ${NUKE_ROOT}")
+if(WIN32)
+    message(STATUS "  Torch:    ${TORCH_DIR}")
+else()
+    message(STATUS "  Torch:    ${NUKE_ROOT}/libtorch.so (headers: ${TORCH_INCLUDE_ROOT})")
+endif()
+message(STATUS "  CUDA:     ${CUDAToolkit_VERSION} (${CUDAToolkit_TARGET_DIR})")
+message(STATUS "  DDImage:  ${DDIMAGE_LIBRARY}")
+message(STATUS "  Sources:  ${SRC}")
+message(STATUS "===============================")
+message(STATUS "")
